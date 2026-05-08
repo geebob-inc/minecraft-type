@@ -2,10 +2,12 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Voxel Engine V2</title>
+<title>Voxel World (Trees + Inventory)</title>
+
 <style>
 body { margin:0; overflow:hidden; }
 canvas { display:block; }
+
 #ui {
   position:absolute;
   top:10px;
@@ -15,173 +17,285 @@ canvas { display:block; }
   background:rgba(0,0,0,0.5);
   padding:10px;
 }
+
+#hotbar {
+  position:absolute;
+  bottom:20px;
+  left:50%;
+  transform:translateX(-50%);
+  display:flex;
+  gap:6px;
+}
+
+.slot {
+  width:40px;
+  height:40px;
+  border:2px solid rgba(255,255,255,0.4);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:white;
+  font-family:sans-serif;
+  background:rgba(0,0,0,0.4);
+}
+
+.slot.selected {
+  border:2px solid yellow;
+}
 </style>
+
 </head>
 <body>
 
 <div id="ui">
 WASD move | Mouse look | Space jump<br>
-Auto-save enabled
+LMB break | RMB place | 1–5 select block
 </div>
+
+<div id="hotbar"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
 // ======================
-// BASIC SETUP
+// SETUP
 // ======================
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB);
+
 const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer();
+camera.position.set(15, 25, 15);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 // LIGHT
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+
 const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(10,20,10);
 scene.add(light);
-scene.add(new THREE.AmbientLight(0xffffff, 0.2));
 
 // ======================
-// MOUSE LOOK (FPS)
+// INVENTORY
+// ======================
+const inventory = [
+  { name:"Grass", color:0x3B8B3B },
+  { name:"Dirt",  color:0x8B5A2B },
+  { name:"Stone", color:0x777777 },
+  { name:"Sand",  color:0xE6D090 },
+  { name:"Wood",  color:0x8B5A2B }
+];
+
+let selected = 0;
+
+const hotbar = document.getElementById("hotbar");
+
+function renderHotbar(){
+  hotbar.innerHTML = "";
+  inventory.forEach((b,i)=>{
+    const slot = document.createElement("div");
+    slot.className = "slot" + (i===selected ? " selected":"");
+    slot.textContent = i+1;
+    slot.style.background = "#" + b.color.toString(16);
+    hotbar.appendChild(slot);
+  });
+}
+renderHotbar();
+
+// ======================
+// INPUT
+// ======================
+const keys = {};
+
+addEventListener("keydown",e=>{
+  keys[e.key.toLowerCase()] = true;
+
+  const n = parseInt(e.key);
+  if(n>=1 && n<=inventory.length){
+    selected = n-1;
+    renderHotbar();
+  }
+});
+
+addEventListener("keyup",e=>{
+  keys[e.key.toLowerCase()] = false;
+});
+
+// ======================
+// MOUSE LOOK
 // ======================
 let yaw = 0, pitch = 0;
 
-document.body.onclick = () => {
-  document.body.requestPointerLock();
-};
+document.body.onclick = () => document.body.requestPointerLock();
 
 document.addEventListener("mousemove",(e)=>{
   if(document.pointerLockElement !== document.body) return;
+
   yaw -= e.movementX * 0.002;
   pitch -= e.movementY * 0.002;
   pitch = Math.max(-1.5, Math.min(1.5, pitch));
 });
 
 // ======================
-// INPUT
-// ======================
-const keys = {};
-addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
-addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
-
-// ======================
-// VOXEL WORLD STORAGE
+// WORLD
 // ======================
 const world = new Map();
-
 const key = (x,y,z)=>`${x},${y},${z}`;
 
 function setBlock(x,y,z,v){
   world.set(key(x,y,z), v);
 }
+
 function getBlock(x,y,z){
   return world.get(key(x,y,z));
 }
 
 // ======================
-// BIOMES (noise-based)
+// TREE SYSTEM
 // ======================
-function noise(x,z){
-  return Math.sin(x*0.1)*Math.cos(z*0.1);
+function setTree(x, y, z) {
+  const height = 4 + Math.floor(Math.random() * 3);
+
+  for (let i = 0; i < height; i++) {
+    setBlock(x, y + i, z, 0x8B5A2B);
+  }
+
+  const top = y + height;
+
+  for (let lx = -2; lx <= 2; lx++) {
+    for (let lz = -2; lz <= 2; lz++) {
+      for (let ly = -1; ly <= 2; ly++) {
+
+        const dist = Math.abs(lx) + Math.abs(lz) + Math.abs(ly);
+        if (dist > 4) continue;
+
+        setBlock(x + lx, top + ly, z + lz, 0x2E8B57);
+      }
+    }
+  }
 }
 
-function getBiome(x,z){
-  const n = noise(x,z);
-  if(n < -0.2) return "desert";
-  if(n > 0.2) return "snow";
-  return "forest";
+// ======================
+// TERRAIN GENERATION
+// ======================
+function height(x, z) {
+  return Math.floor(
+    Math.sin(x * 0.15) * Math.cos(z * 0.15) * 4 + 10
+  );
 }
 
-// ======================
-// TERRAIN GEN
-// ======================
-function height(x,z){
-  return Math.floor(noise(x,z)*5 + 5);
-}
+function generateWorld() {
+  const size = 30;
 
-function generateChunk(cx,cz){
-  const size = 16;
+  for (let x = 0; x < size; x++) {
+    for (let z = 0; z < size; z++) {
 
-  for(let x=0;x<size;x++){
-    for(let z=0;z<size;z++){
+      const h = height(x, z);
 
-      const wx = cx*size + x;
-      const wz = cz*size + z;
-
-      const h = height(wx,wz);
-      const biome = getBiome(wx,wz);
-
-      let topColor;
-
-      if(biome==="desert") topColor = 0xE6D090;
-      if(biome==="forest") topColor = 0x3B8B3B;
-      if(biome==="snow") topColor = 0xFFFFFF;
-
-      for(let y=0;y<h;y++){
-        setBlock(wx,y,wz,0x777777); // stone
+      for (let y = 0; y < h - 3; y++) {
+        setBlock(x, y, z, 0x777777);
       }
 
-      setBlock(wx,h,wz,topColor);
+      for (let y = h - 3; y < h; y++) {
+        setBlock(x, y, z, 0x8B5A2B);
+      }
 
+      setBlock(x, h, z, 0x3B8B3B);
+
+      if (Math.random() < 0.08) {
+        setTree(x, h + 1, z);
+      }
     }
   }
 }
 
-// ======================
-// CHUNKS (infinite system)
-// ======================
-const loaded = new Set();
-
-function loadChunks(px,pz){
-  const range = 2;
-
-  for(let x=-range;x<=range;x++){
-    for(let z=-range;z<=range;z++){
-      const id = `${x},${z}`;
-      if(loaded.has(id)) continue;
-      generateChunk(x,z);
-      loaded.add(id);
-    }
-  }
-}
+generateWorld();
 
 // ======================
-// GREEDY MESHING (SIMPLIFIED)
+// RENDER WORLD
 // ======================
-const geom = new THREE.BoxGeometry(1,1,1);
-const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+const geo = new THREE.BoxGeometry(1,1,1);
+const mat = new THREE.MeshLambertMaterial();
 
 let mesh;
 
-function rebuildMesh(){
-
+function rebuild(){
   if(mesh) scene.remove(mesh);
 
-  const g = new THREE.BufferGeometry();
-  const positions = [];
+  const blocks = [];
 
   for(let [k,v] of world){
-
     const [x,y,z] = k.split(",").map(Number);
-
-    // simple visibility check (skip hidden blocks)
-    if(getBlock(x,y+1,z) && getBlock(x,y-1,z) &&
-       getBlock(x+1,y,z) && getBlock(x-1,y,z) &&
-       getBlock(x,y,z+1) && getBlock(x,y,z-1)) continue;
-
-    positions.push(
-      x,y,z
-    );
+    blocks.push({x,y,z,color:v});
   }
 
-  g.setAttribute("position", new THREE.Float32BufferAttribute(positions,3));
+  mesh = new THREE.InstancedMesh(geo, mat, blocks.length);
 
-  mesh = new THREE.Mesh(geom, mat);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+
+  blocks.forEach((b,i)=>{
+    dummy.position.set(b.x,b.y,b.z);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+
+    color.setHex(b.color);
+    mesh.setColorAt(i, color);
+  });
+
   scene.add(mesh);
 }
 
+rebuild();
+
 // ======================
-// PLAYER PHYSICS + COLLISION
+// RAYCAST
+// ======================
+const raycaster = new THREE.Raycaster();
+
+function getHit(){
+  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  return raycaster.intersectObject(mesh)[0];
+}
+
+// ======================
+// PLACE / BREAK
+// ======================
+addEventListener("mousedown",(e)=>{
+  const hit = getHit();
+  if(!hit) return;
+
+  const p = hit.point;
+
+  if(e.button === 0){
+    const x = Math.floor(p.x);
+    const y = Math.floor(p.y);
+    const z = Math.floor(p.z);
+
+    world.delete(key(x,y,z));
+    rebuild();
+  }
+
+  if(e.button === 2){
+    e.preventDefault();
+
+    const n = hit.face.normal;
+
+    const x = Math.floor(p.x + n.x);
+    const y = Math.floor(p.y + n.y);
+    const z = Math.floor(p.z + n.z);
+
+    setBlock(x,y,z,inventory[selected].color);
+    rebuild();
+  }
+});
+
+addEventListener("contextmenu",e=>e.preventDefault());
+
+// ======================
+// MOVEMENT
 // ======================
 let velY = 0;
 let onGround = false;
@@ -191,38 +305,12 @@ function collide(x,y,z){
 }
 
 // ======================
-// CAMERA START
-// ======================
-camera.position.set(0,10,0);
-
-// ======================
-// SAVE / LOAD
-// ======================
-function save(){
-  localStorage.setItem("world", JSON.stringify([...world]));
-}
-
-function load(){
-  const data = JSON.parse(localStorage.getItem("world")||"[]");
-  world.clear();
-  for(let [k,v] of data){
-    world.set(k,v);
-  }
-}
-
-// auto-load
-load();
-
-// ======================
-// GAME LOOP
+// LOOP
 // ======================
 function animate(){
   requestAnimationFrame(animate);
 
-  loadChunks(camera.position.x/16, camera.position.z/16);
-
-  // movement
-  const speed = 0.1;
+  const speed = 0.15;
 
   const forward = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
   const right = new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
@@ -232,7 +320,6 @@ function animate(){
   if(keys["a"]) camera.position.add(right.clone().multiplyScalar(-speed));
   if(keys["d"]) camera.position.add(right.clone().multiplyScalar(speed));
 
-  // gravity
   velY -= 0.01;
   camera.position.y += velY;
 
@@ -249,16 +336,14 @@ function animate(){
 
   camera.rotation.set(pitch,yaw,0);
 
-  rebuildMesh();
-
-  save();
-
   renderer.render(scene,camera);
 }
 
 animate();
 
-// resize
+// ======================
+// RESIZE
+// ======================
 addEventListener("resize",()=>{
   camera.aspect = innerWidth/innerHeight;
   camera.updateProjectionMatrix();
