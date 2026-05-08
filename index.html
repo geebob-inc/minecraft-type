@@ -1,195 +1,227 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Mini Minecraft + Inventory</title>
+<meta charset="utf-8">
+<title>Voxel Engine V2</title>
 <style>
-  body { margin: 0; overflow: hidden; }
-  canvas { display: block; }
-
-  #info {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    color: white;
-    font-family: sans-serif;
-    background: rgba(0,0,0,0.5);
-    padding: 10px;
-  }
-
-  #hotbar {
-    position: absolute;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 8px;
-  }
-
-  .slot {
-    width: 50px;
-    height: 50px;
-    border: 2px solid white;
-    background: rgba(0,0,0,0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-family: sans-serif;
-    cursor: pointer;
-  }
-
-  .selected {
-    border: 2px solid yellow;
-  }
+body { margin:0; overflow:hidden; }
+canvas { display:block; }
+#ui {
+  position:absolute;
+  top:10px;
+  left:10px;
+  color:white;
+  font-family:sans-serif;
+  background:rgba(0,0,0,0.5);
+  padding:10px;
+}
 </style>
 </head>
 <body>
 
-<div id="info">
-  WASD = Move | Mouse = Look | Click = Remove | Right Click = Place<br>
-  1-5 = Select block
+<div id="ui">
+WASD move | Mouse look | Space jump<br>
+Auto-save enabled
 </div>
-
-<div id="hotbar"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
-// Scene setup
+// ======================
+// BASIC SETUP
+// ======================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87CEEB);
-
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer();
-renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// Light
+// LIGHT
 const light = new THREE.DirectionalLight(0xffffff, 1);
-light.position.set(10,20,10);
 scene.add(light);
+scene.add(new THREE.AmbientLight(0xffffff, 0.2));
 
-// Controls
-let keys = {};
-document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
-document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
-
-// Mouse look
+// ======================
+// MOUSE LOOK (FPS)
+// ======================
 let yaw = 0, pitch = 0;
 
-document.body.addEventListener("mousemove", (e) => {
-  if (document.pointerLockElement === document.body) {
-    yaw -= e.movementX * 0.002;
-    pitch -= e.movementY * 0.002;
-    pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
-  }
-});
-
-document.body.addEventListener("click", () => {
+document.body.onclick = () => {
   document.body.requestPointerLock();
+};
+
+document.addEventListener("mousemove",(e)=>{
+  if(document.pointerLockElement !== document.body) return;
+  yaw -= e.movementX * 0.002;
+  pitch -= e.movementY * 0.002;
+  pitch = Math.max(-1.5, Math.min(1.5, pitch));
 });
 
-// Block types (INVENTORY)
-const blockTypes = [
-  { name: "Grass", color: 0x55aa55 },
-  { name: "Dirt",  color: 0x8B5A2B },
-  { name: "Stone", color: 0x888888 },
-  { name: "Wood",  color: 0xA0522D },
-  { name: "Sand",  color: 0xF4E3A6 }
-];
+// ======================
+// INPUT
+// ======================
+const keys = {};
+addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
+addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
 
-let selectedBlock = 0;
+// ======================
+// VOXEL WORLD STORAGE
+// ======================
+const world = new Map();
 
-// Hotbar UI
-const hotbar = document.getElementById("hotbar");
+const key = (x,y,z)=>`${x},${y},${z}`;
 
-function updateHotbar() {
-  hotbar.innerHTML = "";
-  blockTypes.forEach((b, i) => {
-    const slot = document.createElement("div");
-    slot.className = "slot" + (i === selectedBlock ? " selected" : "");
-    slot.innerText = i + 1;
-    slot.onclick = () => {
-      selectedBlock = i;
-      updateHotbar();
-    };
-    hotbar.appendChild(slot);
-  });
+function setBlock(x,y,z,v){
+  world.set(key(x,y,z), v);
 }
-updateHotbar();
+function getBlock(x,y,z){
+  return world.get(key(x,y,z));
+}
 
-// Number keys for inventory
-document.addEventListener("keydown", (e) => {
-  if (e.key >= "1" && e.key <= "5") {
-    selectedBlock = parseInt(e.key) - 1;
-    updateHotbar();
+// ======================
+// BIOMES (noise-based)
+// ======================
+function noise(x,z){
+  return Math.sin(x*0.1)*Math.cos(z*0.1);
+}
+
+function getBiome(x,z){
+  const n = noise(x,z);
+  if(n < -0.2) return "desert";
+  if(n > 0.2) return "snow";
+  return "forest";
+}
+
+// ======================
+// TERRAIN GEN
+// ======================
+function height(x,z){
+  return Math.floor(noise(x,z)*5 + 5);
+}
+
+function generateChunk(cx,cz){
+  const size = 16;
+
+  for(let x=0;x<size;x++){
+    for(let z=0;z<size;z++){
+
+      const wx = cx*size + x;
+      const wz = cz*size + z;
+
+      const h = height(wx,wz);
+      const biome = getBiome(wx,wz);
+
+      let topColor;
+
+      if(biome==="desert") topColor = 0xE6D090;
+      if(biome==="forest") topColor = 0x3B8B3B;
+      if(biome==="snow") topColor = 0xFFFFFF;
+
+      for(let y=0;y<h;y++){
+        setBlock(wx,y,wz,0x777777); // stone
+      }
+
+      setBlock(wx,h,wz,topColor);
+
+    }
   }
-});
+}
 
-// World
-const blocks = [];
-const geometry = new THREE.BoxGeometry(1,1,1);
+// ======================
+// CHUNKS (infinite system)
+// ======================
+const loaded = new Set();
 
-function addBlock(x, y, z, typeIndex=0) {
-  const material = new THREE.MeshLambertMaterial({
-    color: blockTypes[typeIndex].color
-  });
+function loadChunks(px,pz){
+  const range = 2;
 
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(x,y,z);
-  mesh.userData.type = typeIndex;
+  for(let x=-range;x<=range;x++){
+    for(let z=-range;z<=range;z++){
+      const id = `${x},${z}`;
+      if(loaded.has(id)) continue;
+      generateChunk(x,z);
+      loaded.add(id);
+    }
+  }
+}
 
+// ======================
+// GREEDY MESHING (SIMPLIFIED)
+// ======================
+const geom = new THREE.BoxGeometry(1,1,1);
+const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+
+let mesh;
+
+function rebuildMesh(){
+
+  if(mesh) scene.remove(mesh);
+
+  const g = new THREE.BufferGeometry();
+  const positions = [];
+
+  for(let [k,v] of world){
+
+    const [x,y,z] = k.split(",").map(Number);
+
+    // simple visibility check (skip hidden blocks)
+    if(getBlock(x,y+1,z) && getBlock(x,y-1,z) &&
+       getBlock(x+1,y,z) && getBlock(x-1,y,z) &&
+       getBlock(x,y,z+1) && getBlock(x,y,z-1)) continue;
+
+    positions.push(
+      x,y,z
+    );
+  }
+
+  g.setAttribute("position", new THREE.Float32BufferAttribute(positions,3));
+
+  mesh = new THREE.Mesh(geom, mat);
   scene.add(mesh);
-  blocks.push(mesh);
 }
 
-// Flat world
-for (let x=-10;x<=10;x++){
-  for (let z=-10;z<=10;z++){
-    addBlock(x,0,z,0);
+// ======================
+// PLAYER PHYSICS + COLLISION
+// ======================
+let velY = 0;
+let onGround = false;
+
+function collide(x,y,z){
+  return world.has(key(Math.floor(x),Math.floor(y),Math.floor(z)));
+}
+
+// ======================
+// CAMERA START
+// ======================
+camera.position.set(0,10,0);
+
+// ======================
+// SAVE / LOAD
+// ======================
+function save(){
+  localStorage.setItem("world", JSON.stringify([...world]));
+}
+
+function load(){
+  const data = JSON.parse(localStorage.getItem("world")||"[]");
+  world.clear();
+  for(let [k,v] of data){
+    world.set(k,v);
   }
 }
 
-// Raycasting
-const raycaster = new THREE.Raycaster();
+// auto-load
+load();
 
-function getHit() {
-  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
-  const hits = raycaster.intersectObjects(blocks);
-  return hits[0];
-}
-
-// Remove block
-document.addEventListener("click", () => {
-  const hit = getHit();
-  if (hit) {
-    scene.remove(hit.object);
-    blocks.splice(blocks.indexOf(hit.object),1);
-  }
-});
-
-// Place block (right click)
-document.addEventListener("contextmenu", (e) => {
-  e.preventDefault();
-
-  const hit = getHit();
-  if (hit) {
-    const pos = hit.object.position.clone().add(hit.face.normal);
-    addBlock(pos.x,pos.y,pos.z,selectedBlock);
-  }
-});
-
-// Camera
-camera.position.set(0,5,10);
-
-// Movement
-let yawSpeed = 0;
-let pitchSpeed = 0;
-
+// ======================
+// GAME LOOP
+// ======================
 function animate(){
   requestAnimationFrame(animate);
 
+  loadChunks(camera.position.x/16, camera.position.z/16);
+
+  // movement
   const speed = 0.1;
 
   const forward = new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
@@ -200,18 +232,37 @@ function animate(){
   if(keys["a"]) camera.position.add(right.clone().multiplyScalar(-speed));
   if(keys["d"]) camera.position.add(right.clone().multiplyScalar(speed));
 
-  camera.rotation.set(pitch, yaw, 0);
+  // gravity
+  velY -= 0.01;
+  camera.position.y += velY;
+
+  if(collide(camera.position.x, camera.position.y-1, camera.position.z)){
+    velY = 0;
+    onGround = true;
+    camera.position.y = Math.ceil(camera.position.y);
+  }
+
+  if(keys[" "] && onGround){
+    velY = 0.2;
+    onGround = false;
+  }
+
+  camera.rotation.set(pitch,yaw,0);
+
+  rebuildMesh();
+
+  save();
 
   renderer.render(scene,camera);
 }
 
 animate();
 
-// Resize
-window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth/window.innerHeight;
+// resize
+addEventListener("resize",()=>{
+  camera.aspect = innerWidth/innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(innerWidth,innerHeight);
 });
 </script>
 
