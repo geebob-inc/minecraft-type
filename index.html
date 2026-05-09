@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Voxel Engine - Clean FPS</title>
+<title>Voxel Engine - Taller Player</title>
 <style>
 body { margin:0; overflow:hidden; cursor:crosshair; }
 canvas { display:block; }
@@ -30,24 +30,23 @@ canvas { display:block; }
 // ===================== SCENE =====================
 const scene = new THREE.Scene();
 
-// 🌫 atmosphere (better graphics)
-scene.fog = new THREE.Fog(0xaad5ff, 15, 90);
 scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0xaad6ff, 20, 90);
 
-// camera (NOT rotated directly anymore)
+// ===================== CAMERA =====================
 const camera = new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1000);
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(innerWidth,innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// 🌞 lighting (Minecraft feel)
+// ===================== LIGHTING (BETTER GRAPHICS) =====================
 scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1));
 
-const sun = new THREE.DirectionalLight(0xffffff,1);
-sun.position.set(1,2,1);
+const sun = new THREE.DirectionalLight(0xffffff,1.2);
+sun.position.set(2,3,1);
 scene.add(sun);
 
-// ===================== CAMERA RIG (FIXES TILT) =====================
+// ===================== FPS RIG (NO TILT) =====================
 const playerYaw = new THREE.Object3D();
 const playerPitch = new THREE.Object3D();
 
@@ -55,8 +54,17 @@ playerPitch.add(camera);
 playerYaw.add(playerPitch);
 scene.add(playerYaw);
 
-// ===================== PLAYER =====================
-let player = { x:0,y:10,z:0,vy:0,onGround:false };
+// ===================== PLAYER (TALLER) =====================
+let player = {
+  x:0,
+  y:12,   // ⬅ taller spawn height
+  z:0,
+  vy:0,
+  onGround:false
+};
+
+// 👇 IMPORTANT: eye height increased (makes you feel taller)
+const eyeHeight = 1.8;
 
 // ===================== MOVEMENT =====================
 let vel = {x:0,z:0};
@@ -66,7 +74,7 @@ const sprintSpeed = 0.20;
 const accel = 0.02;
 const friction = 0.85;
 const gravity = -0.015;
-const jumpPower = 0.30;
+const jumpPower = 0.32;
 
 // ===================== WORLD =====================
 const CHUNK = 16;
@@ -81,22 +89,24 @@ const geo = new THREE.BoxGeometry(1,1,1);
 function height(x,z){
   return Math.floor(
     Math.sin(x*0.2)*3 +
-    Math.cos(z*0.2)*3 + 7
+    Math.cos(z*0.2)*3 + 8
   );
 }
 
-// ===================== TEXTURES (BETTER GRAPHICS) =====================
-function tex(color){
+// ===================== TEXTURES (IMPROVED LOOK) =====================
+function tex(base){
   let c=document.createElement("canvas");
   c.width=c.height=32;
   let g=c.getContext("2d");
 
-  g.fillStyle=color;
+  // base color
+  g.fillStyle=base;
   g.fillRect(0,0,32,32);
 
-  // subtle noise = better realism
-  for(let i=0;i<40;i++){
-    g.fillStyle="rgba(0,0,0,0.15)";
+  // soft noise shading
+  for(let i=0;i<80;i++){
+    let v=Math.random()*40;
+    g.fillStyle=`rgba(0,0,0,${Math.random()*0.15})`;
     g.fillRect(Math.random()*32,Math.random()*32,2,2);
   }
 
@@ -110,10 +120,10 @@ const mats = {
 };
 
 // ===================== BLOCK =====================
-function key(x,y,z){return x+","+y+","+z;}
+function key(x,y,z){ return x+","+y+","+z; }
 
 function addBlock(x,y,z,type){
-  const m=new THREE.Mesh(geo,mats[type]);
+  let m = new THREE.Mesh(geo,mats[type]);
   m.position.set(x,y,z);
   scene.add(m);
   voxels.set(key(x,y,z),1);
@@ -148,7 +158,7 @@ function buildChunk(cx,cz){
   chunks[id]=list;
 }
 
-// unload chunks
+// unload
 function unload(cx,cz){
   for(let id in chunks){
     let [x,z]=id.split(",").map(Number);
@@ -165,19 +175,17 @@ let keys={};
 document.addEventListener("keydown",e=>keys[e.code]=true);
 document.addEventListener("keyup",e=>keys[e.code]=false);
 
-// ===================== MOUSE LOOK (NO TILT BUG) =====================
-let yaw = 0;
-let pitch = 0;
+// mouse look
+let yaw=0,pitch=0;
 
 document.addEventListener("click",()=>document.body.requestPointerLock());
 
 document.addEventListener("mousemove",(e)=>{
   if(document.pointerLockElement){
-
     yaw -= e.movementX * 0.002;
     pitch -= e.movementY * 0.002;
 
-    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+    pitch = Math.max(-1.2,Math.min(1.2,pitch));
 
     playerYaw.rotation.y = yaw;
     playerPitch.rotation.x = pitch;
@@ -244,7 +252,7 @@ function updatePlayer(){
     player.onGround = true;
   }
 
-  // ✅ CAMERA FOLLOW (NO TILT EVER AGAIN)
+  // 🧍 TALL PLAYER CAMERA OFFSET
   playerYaw.position.set(player.x, player.y, player.z);
 }
 
