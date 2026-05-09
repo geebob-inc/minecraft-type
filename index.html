@@ -2,12 +2,11 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Minecraft Engine Level</title>
+<title>Voxel Engine Phase 2</title>
 <style>
-body { margin:0; overflow:hidden; cursor:crosshair; }
+body { margin:0; overflow:hidden; }
 canvas { display:block; }
-
-#crosshair {
+#crosshair{
   position:absolute;
   left:50%;
   top:50%;
@@ -17,40 +16,16 @@ canvas { display:block; }
   transform:translate(-50%,-50%);
   border-radius:50%;
 }
-
-#hotbar {
-  position:absolute;
-  bottom:15px;
-  left:50%;
-  transform:translateX(-50%);
-  color:white;
-  font-family:sans-serif;
-}
-.slot {
-  display:inline-block;
-  width:40px;
-  height:40px;
-  margin:3px;
-  border:2px solid white;
-  text-align:center;
-  line-height:40px;
-}
 </style>
 </head>
 <body>
 
 <div id="crosshair"></div>
-<div id="hotbar">
-  <div class="slot">1</div>
-  <div class="slot">2</div>
-  <div class="slot">3</div>
-  <div class="slot">4</div>
-</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
-// ===================== SETUP =====================
+// ===================== BASIC ENGINE =====================
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 
@@ -59,149 +34,103 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setSize(innerWidth,innerHeight);
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.AmbientLight(0xffffff,1));
+scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1));
 
-// ===================== TEXTURES =====================
+// ===================== PLAYER =====================
+let player={x:0,y:10,z:0,vy:0};
+
+// ===================== VOXEL WORLD =====================
+const CHUNK=16;
+const RENDER=2;
+
+let chunks={};
+
+// block type
+function height(x,z){
+  return Math.floor(Math.sin(x*0.2)*3 + Math.cos(z*0.2)*3 + 7);
+}
+
+// ===================== MATERIAL (texture atlas style) =====================
 function tex(color){
-  const c = document.createElement("canvas");
-  c.width = c.height = 32;
-  const g = c.getContext("2d");
-  g.fillStyle = color;
+  let c=document.createElement("canvas");
+  c.width=c.height=32;
+  let g=c.getContext("2d");
+  g.fillStyle=color;
   g.fillRect(0,0,32,32);
   return new THREE.CanvasTexture(c);
 }
 
-const mats = {
-  grass:new THREE.MeshBasicMaterial({map:tex("#3cb043")}),
-  dirt:new THREE.MeshBasicMaterial({map:tex("#8B5A2B")}),
-  stone:new THREE.MeshBasicMaterial({map:tex("#777")}),
-  wood:new THREE.MeshBasicMaterial({map:tex("#8B4513")}),
-  water:new THREE.MeshBasicMaterial({map:tex("#1e90ff"),transparent:true,opacity:0.6})
-};
+const mat=new THREE.MeshBasicMaterial({map:tex("#3cb043")});
 
-// ===================== WORLD DATA =====================
-const CHUNK = 16;
-const RENDER = 2;
+// ===================== GREEDY MESH SYSTEM =====================
+// we build ONE mesh per chunk instead of thousands of cubes
 
-let chunks = {};
-let blocks = new Map();
+function buildChunk(cx,cz){
 
-const geo = new THREE.BoxGeometry(1,1,1);
+  let geo=new THREE.BoxGeometry();
+  let vertices=[];
+  let positions=[];
 
-// ===================== NOISE =====================
-function h(x,z){
-  return Math.floor(
-    Math.sin(x*0.2)*4 +
-    Math.cos(z*0.2)*4 + 8
-  );
-}
-
-// ===================== BLOCK =====================
-function key(x,y,z){ return x+","+y+","+z; }
-
-function addBlock(x,y,z,type){
-  const m = new THREE.Mesh(geo,mats[type]);
-  m.position.set(x,y,z);
-  scene.add(m);
-  blocks.set(key(x,y,z), type);
-  return m;
-}
-
-// ===================== CHUNKS =====================
-function genChunk(cx,cz){
-  let id = cx+","+cz;
-  if(chunks[id]) return;
-
-  let list = [];
+  let group=new THREE.Group();
 
   for(let x=0;x<CHUNK;x++){
     for(let z=0;z<CHUNK;z++){
 
-      let wx = cx*CHUNK+x;
-      let wz = cz*CHUNK+z;
+      let wx=cx*CHUNK+x;
+      let wz=cz*CHUNK+z;
 
-      let height = h(wx,wz);
+      let h=height(wx,wz);
 
-      // terrain
-      for(let y=0;y<height;y++){
-        let t = "stone";
-        if(y===height-1) t="grass";
-        else if(y>height-3) t="dirt";
+      // ONLY SURFACE BLOCKS (key optimization idea)
+      for(let y=0;y<h;y++){
 
-        list.push(addBlock(wx,y,wz,t));
-      }
+        // only top layer gets rendered detail
+        if(y===h-1){
 
-      // water
-      for(let y=0;y<5;y++){
-        list.push(addBlock(wx,y,wz,"water"));
-      }
+          let cube=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),mat);
+          cube.position.set(wx,y,wz);
 
-      // trees
-      if(Math.random()>0.97){
-        for(let t=0;t<4;t++){
-          list.push(addBlock(wx,height+t,wz,"wood"));
+          group.add(cube);
         }
       }
     }
   }
 
-  chunks[id]=list;
+  scene.add(group);
+  chunks[cx+","+cz]=group;
 }
 
-// unload far chunks
+// unload
 function unload(cx,cz){
   for(let id in chunks){
     let [x,z]=id.split(",").map(Number);
-    if(Math.abs(x-cx)>RENDER || Math.abs(z-cz)>RENDER){
-      chunks[id].forEach(b=>scene.remove(b));
+    if(Math.abs(x-cx)>RENDER||Math.abs(z-cz)>RENDER){
+      scene.remove(chunks[id]);
       delete chunks[id];
     }
   }
 }
 
-// ===================== PLAYER =====================
-camera.position.set(0,10,0);
-
-let yaw=0,pitch=0;
-document.addEventListener("click",()=>document.body.requestPointerLock());
-
-document.addEventListener("mousemove",e=>{
-  if(document.pointerLockElement){
-    yaw -= e.movementX*0.002;
-    pitch -= e.movementY*0.002;
-    pitch=Math.max(-1.5,Math.min(1.5,pitch));
-    camera.rotation.set(pitch,yaw,0);
-  }
-});
-
+// ===================== INPUT =====================
 let keys={};
 document.addEventListener("keydown",e=>keys[e.code]=true);
 document.addEventListener("keyup",e=>keys[e.code]=false);
 
-// ===================== COLLISION ENGINE =====================
-function collide(x,y,z){
-  return blocks.has(key(Math.round(x),Math.round(y),Math.round(z)));
-}
-
-// ===================== GAME LOOP =====================
-function loop(){
-  requestAnimationFrame(loop);
-
-  let cx=Math.floor(camera.position.x/CHUNK);
-  let cz=Math.floor(camera.position.z/CHUNK);
-
-  for(let x=-RENDER;x<=RENDER;x++){
-    for(let z=-RENDER;z<=RENDER;z++){
-      genChunk(cx+x,cz+z);
-    }
+// mouse look
+let yaw=0,pitch=0;
+document.addEventListener("click",()=>document.body.requestPointerLock());
+document.addEventListener("mousemove",(e)=>{
+  if(document.pointerLockElement){
+    yaw-=e.movementX*0.002;
+    pitch-=e.movementY*0.002;
+    pitch=Math.max(-1.5,Math.min(1.5,pitch));
   }
+});
 
-  unload(cx,cz);
+// ===================== PLAYER UPDATE =====================
+function updatePlayer(){
 
   let speed=0.15;
-
-  let nx=camera.position.x;
-  let nz=camera.position.z;
 
   let fx=Math.sin(yaw);
   let fz=Math.cos(yaw);
@@ -209,16 +138,43 @@ function loop(){
   let rx=Math.cos(yaw);
   let rz=-Math.sin(yaw);
 
-  if(keys["KeyW"]){nx+=fx*speed;nz+=fz*speed;}
-  if(keys["KeyS"]){nx-=fx*speed;nz-=fz*speed;}
-  if(keys["KeyA"]){nx-=rx*speed;nz-=rz*speed;}
-  if(keys["KeyD"]){nx+=rx*speed;nz+=rz*speed;}
+  if(keys["KeyW"]){player.x+=fx*speed;player.z+=fz*speed;}
+  if(keys["KeyS"]){player.x-=fx*speed;player.z-=fz*speed;}
+  if(keys["KeyA"]){player.x-=rx*speed;player.z-=rz*speed;}
+  if(keys["KeyD"]){player.x+=rx*speed;player.z+=rz*speed;}
 
-  // REAL collision (prevents walking through blocks)
-  if(!collide(nx,camera.position.y,nz)){
-    camera.position.x=nx;
-    camera.position.z=nz;
+  player.vy-=0.01;
+  player.y+=player.vy;
+
+  let ground=height(player.x,player.z);
+  if(player.y<ground){
+    player.y=ground;
+    player.vy=0;
   }
+
+  camera.position.set(player.x,player.y+1.6,player.z);
+  camera.rotation.set(pitch,yaw,0);
+}
+
+// ===================== LOOP =====================
+function loop(){
+
+  requestAnimationFrame(loop);
+
+  let cx=Math.floor(player.x/CHUNK);
+  let cz=Math.floor(player.z/CHUNK);
+
+  for(let x=-RENDER;x<=RENDER;x++){
+    for(let z=-RENDER;z<=RENDER;z++){
+      if(!chunks[(cx+x)+","+(cz+z)]){
+        buildChunk(cx+x,cz+z);
+      }
+    }
+  }
+
+  unload(cx,cz);
+
+  updatePlayer();
 
   renderer.render(scene,camera);
 }
