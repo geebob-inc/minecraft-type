@@ -5,7 +5,27 @@ import { World } from "./world.js";
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 
-const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+/* =======================
+   FIX #1: BETTER LIGHTING
+======================= */
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+const sun = new THREE.DirectionalLight(0xffffff, 1);
+sun.position.set(50, 100, 50);
+scene.add(sun);
+
+/* =======================
+   CAMERA (FIXED)
+======================= */
+const camera = new THREE.PerspectiveCamera(
+  75,
+  innerWidth / innerHeight,
+  0.1,
+  1000
+);
+
+/* FIX: start high so terrain is visible */
+camera.position.set(0, 30, 0);
 
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(innerWidth, innerHeight);
@@ -15,21 +35,11 @@ const controls = new PointerLockControls(camera, document.body);
 document.body.addEventListener("click", () => controls.lock());
 scene.add(controls.getObject());
 
-camera.position.y = 2;
-
-scene.add(new THREE.HemisphereLight(0xffffff, 0x444444));
-
 /* =======================
    WORLD
 ======================= */
 const world = new World(scene);
 world.init();
-
-/* =======================
-   SPAWN MOBS
-======================= */
-world.spawnMob(0, 10, 0);
-world.spawnMob(5, 10, 5);
 
 /* =======================
    INPUT
@@ -46,7 +56,7 @@ addEventListener("keydown", (e) => {
 });
 
 /* =======================
-   MOVE PLAYER
+   MOVE
 ======================= */
 function move() {
   const speed = 0.12;
@@ -88,6 +98,9 @@ function animate() {
 }
 animate();
 
+/* =======================
+   RESIZE
+======================= */
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
