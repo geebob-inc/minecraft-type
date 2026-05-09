@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Voxel Engine Combat Upgrade</title>
+<title>Voxel Chunk Engine Fix</title>
 <style>
 body{margin:0;overflow:hidden;background:#000}
 canvas{display:block}
@@ -10,29 +10,26 @@ canvas{display:block}
 position:absolute;
 top:10px;left:10px;
 color:white;
+font-family:monospace;
 background:#0008;
 padding:10px;
-font-family:monospace;
 }
 </style>
 </head>
 <body>
 
-<div id="ui">
-LMB = Attack / Mine<br>
-WASD = Move | Space = Jump
-</div>
+<div id="ui">Chunk engine: physics + render unified</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
 <script>
 
 //////////////////////////////
-// ENGINE CORE
+// CORE ENGINE
 //////////////////////////////
 
 const scene=new THREE.Scene();
-scene.fog=new THREE.Fog(0xaad5ff,50,160);
+scene.fog=new THREE.Fog(0xaad5ff,40,160);
 
 const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1000);
 camera.position.set(0,30,0);
@@ -44,34 +41,134 @@ document.body.appendChild(renderer.domElement);
 scene.add(new THREE.AmbientLight(0xffffff,0.6));
 
 const sun=new THREE.DirectionalLight(0xffffff,1.2);
-sun.position.set(80,120,40);
+sun.position.set(100,120,50);
 scene.add(sun);
 
 //////////////////////////////
-// WORLD
+// VOXEL WORLD (SINGLE SOURCE OF TRUTH)
 //////////////////////////////
 
-const SIZE=16;
 const world=new Map();
-const chunks=new Map();
 
 function key(x,y,z){return x+","+y+","+z}
+
+// terrain function (used ONLY to generate world ONCE)
 function height(x,z){
-return Math.floor(Math.sin(x*0.08)*Math.cos(z*0.08)*7+14);
+return Math.floor(Math.sin(x*0.08)*Math.cos(z*0.08)*6+12);
 }
 
 //////////////////////////////
-// PLAYER + WEAPON SYSTEM
+// CHUNK SYSTEM
 //////////////////////////////
 
-const player={
-hp:20,
-weapon:"sword",
-cooldown:0
-};
+const CHUNK_SIZE=16;
+const chunks=new Map();
 
-let yaw=0,pitch=0;
+function chunkKey(x,z){
+return x+","+z;
+}
+
+//////////////////////////////
+// GENERATE VOXEL DATA (REAL WORLD)
+//////////////////////////////
+
+function generateVoxelWorld(){
+
+for(let x=-64;x<64;x++){
+for(let z=-64;z<64;z++){
+
+let h=height(x,z);
+
+for(let y=0;y<h;y++){
+world.set(key(x,y,z),1);
+}
+
+}
+
+}
+
+}
+
+generateVoxelWorld();
+
+//////////////////////////////
+// CHUNK BUILDER (RENDER = SAME DATA)
+//////////////////////////////
+
+const geo=new THREE.BoxGeometry(1,1,1);
+const mat=new THREE.MeshStandardMaterial({color:0x3aa655});
+
+function buildChunk(cx,cz){
+
+const group=new THREE.Group();
+
+for(let x=0;x<CHUNK_SIZE;x++){
+for(let z=0;z<CHUNK_SIZE;z++){
+
+let wx=cx*CHUNK_SIZE+x;
+let wz=cz*CHUNK_SIZE+z;
+
+for(let y=0;y<30;y++){
+
+if(world.has(key(wx,y,wz))){
+
+const cube=new THREE.Mesh(geo,mat);
+
+cube.position.set(wx,y,wz);
+
+group.add(cube);
+
+}
+
+}
+
+}
+
+}
+
+scene.add(group);
+
+return group;
+
+}
+
+//////////////////////////////
+// LOAD CHUNKS AROUND PLAYER
+//////////////////////////////
+
+function updateChunks(){
+
+let cx=Math.floor(camera.position.x/CHUNK_SIZE);
+let cz=Math.floor(camera.position.z/CHUNK_SIZE);
+
+for(let x=-2;x<=2;x++){
+for(let z=-2;z<=2;z++){
+
+let id=chunkKey(cx+x,cz+z);
+
+if(!chunks.has(id)){
+
+let chunk=buildChunk(cx+x,cz+z);
+chunks.set(id,chunk);
+
+}
+
+}
+
+}
+
+}
+
+//////////////////////////////
+// PHYSICS (NOW USES SAME WORLD)
+//////////////////////////////
+
+function solid(x,y,z){
+return world.has(key(Math.floor(x),Math.floor(y),Math.floor(z)));
+}
+
 let vy=0,onGround=false;
+let yaw=0,pitch=0;
 
 const keys={};
 
@@ -87,41 +184,6 @@ pitch-=e.movementY*0.002;
 pitch=Math.max(-1.4,Math.min(1.4,pitch));
 });
 
-//////////////////////////////
-// MOBS (WITH HP)
-//////////////////////////////
-
-const mobs=[];
-
-function spawnMob(){
-
-const m=new THREE.Mesh(
-new THREE.BoxGeometry(1,1,1),
-new THREE.MeshStandardMaterial({color:0x33ff33})
-);
-
-m.position.set(Math.random()*40-20,30,Math.random()*40-20);
-
-scene.add(m);
-
-mobs.push({
-mesh:m,
-hp:3,
-dir:Math.random()*Math.PI*2
-});
-
-}
-
-for(let i=0;i<10;i++)spawnMob();
-
-//////////////////////////////
-// BLOCK STORAGE
-//////////////////////////////
-
-function solid(x,y,z){
-return y < height(x,z);
-}
-
 function collide(x,y,z){
 
 for(let dx=-0.3;dx<=0.3;dx+=0.3){
@@ -136,71 +198,12 @@ return false;
 }
 
 //////////////////////////////
-// COMBAT SYSTEM
-//////////////////////////////
-
-function attack(){
-
-if(player.cooldown>0)return;
-
-player.cooldown=12;
-
-const ray=new THREE.Raycaster();
-ray.setFromCamera(new THREE.Vector2(0,0),camera);
-
-// 🐄 HIT MOBS FIRST
-for(let i=0;i<mobs.length;i++){
-
-let m=mobs[i];
-
-if(m.mesh.position.distanceTo(camera.position)<4){
-
-m.hp-=1;
-
-// knockback
-m.mesh.position.x+=Math.sin(yaw)*0.6;
-m.mesh.position.z+=Math.cos(yaw)*0.6;
-
-if(m.hp<=0){
-scene.remove(m.mesh);
-mobs.splice(i,1);
-}
-
-return;
-}
-
-}
-
-// 🧱 OTHERWISE BREAK BLOCK
-const hit=ray.intersectObjects(scene.children,true)[0];
-
-if(hit){
-
-let p=hit.object.position;
-
-world.delete(key(
-Math.floor(p.x),
-Math.floor(p.y),
-Math.floor(p.z)
-));
-
-hit.object.visible=false;
-
-}
-
-}
-
-addEventListener("mousedown",e=>{
-if(e.button===0) attack();
-});
-
-//////////////////////////////
 // PLAYER UPDATE
 //////////////////////////////
 
 function updatePlayer(){
 
-let sp=0.13;
+let sp=0.12;
 
 let fx=-Math.sin(yaw);
 let fz=-Math.cos(yaw);
@@ -241,44 +244,15 @@ camera.rotation.x=pitch;
 }
 
 //////////////////////////////
-// MOB AI
-//////////////////////////////
-
-function updateMobs(){
-
-for(let m of mobs){
-
-m.dir+=(Math.random()-0.5)*0.05;
-
-m.mesh.position.x+=Math.cos(m.dir)*0.03;
-m.mesh.position.z+=Math.sin(m.dir)*0.03;
-
-m.mesh.position.y=height(
-m.mesh.position.x,
-m.mesh.position.z
-)+1;
-
-// attack player
-if(m.mesh.position.distanceTo(camera.position)<1.5){
-player.hp-=0.02;
-}
-
-}
-
-}
-
-//////////////////////////////
-// LOOP
+// GAME LOOP
 //////////////////////////////
 
 function animate(){
 
 requestAnimationFrame(animate);
 
-if(player.cooldown>0)player.cooldown--;
-
-updatePlayer();
-updateMobs();
+updateChunks();   // render system
+updatePlayer();   // physics system
 
 renderer.render(scene,camera);
 
